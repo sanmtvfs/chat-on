@@ -1,34 +1,37 @@
 const Message = require('../models/Message');
-const ModerationService = require('./ModerationService');
-const User = require('../models/User');
 const Room = require('../models/Room');
+const User = require('../models/User');
 
 class MessageService {
-  static async createMessage(messageData) {
-    const { content, senderId, roomId, files } = messageData;
+  static async createMessage({ content, senderId, roomId, files }) {
+    // Check room exists
+    const room = await Room.findById(roomId);
+    if (!room) {
+      throw new Error('Room not found');
+    }
 
-    // Check moderation
-    const moderationResult = await ModerationService.checkMessageSafety(content, senderId);
+    // Check user is in room
+    if (!room.members.includes(senderId)) {
+      throw new Error('You are not a member of this room');
+    }
 
     const message = new Message({
-      content: moderationResult.content,
+      content,
       sender: senderId,
       room: roomId,
-      files: files || [],
-      containsProfanity: moderationResult.containsProfanity,
-      originalContent: moderationResult.originalContent
+      files
     });
 
     await message.save();
-    return message.populate('sender', 'username avatar ageGroup');
+    return message.populate('sender', 'username avatar');
   }
 
   static async getMessages(roomId, limit = 50, skip = 0) {
-    const messages = await Message.find({ room: roomId, isDeleted: false })
-      .populate('sender', 'username avatar ageGroup')
+    const messages = await Message.find({ room: roomId })
+      .populate('sender', 'username avatar')
       .sort({ createdAt: -1 })
-      .limit(limit)
-      .skip(skip);
+      .limit(parseInt(limit))
+      .skip(parseInt(skip));
 
     return messages.reverse();
   }
@@ -39,38 +42,30 @@ class MessageService {
       throw new Error('Message not found');
     }
 
-    if (!message.sender.equals(userId)) {
+    if (message.sender.toString() !== userId.toString()) {
       throw new Error('You can only edit your own messages');
     }
 
-    // Check moderation
-    const moderationResult = await ModerationService.checkMessageSafety(content, userId);
-
-    message.content = moderationResult.content;
-    message.isEdited = true;
+    message.content = content;
+    message.edited = true;
     message.editedAt = new Date();
-    message.containsProfanity = moderationResult.containsProfanity;
-    message.originalContent = moderationResult.originalContent;
 
     await message.save();
     return message.populate('sender', 'username avatar');
   }
 
-  static async deleteMessage(messageId, userId, isAdmin = false) {
+  static async deleteMessage(messageId, userId) {
     const message = await Message.findById(messageId);
     if (!message) {
       throw new Error('Message not found');
     }
 
-    if (!isAdmin && !message.sender.equals(userId)) {
+    if (message.sender.toString() !== userId.toString()) {
       throw new Error('You can only delete your own messages');
     }
 
-    message.isDeleted = true;
-    message.deletedAt = new Date();
-    await message.save();
-
-    return message;
+    await Message.findByIdAndDelete(messageId);
+    return { message: 'Message deleted' };
   }
 
   static async addReaction(messageId, emoji, userId) {
@@ -79,13 +74,12 @@ class MessageService {
       throw new Error('Message not found');
     }
 
-    let reaction = message.reactions.find(r => r.emoji === emoji);
-    if (!reaction) {
-      message.reactions.push({ emoji, users: [userId] });
-    } else {
-      if (!reaction.users.includes(userId)) {
-        reaction.users.push(userId);
-      }
+    const reactionIndex = message.reactions.findIndex(
+      r => r.emoji === emoji && r.userId.toString() === userId.toString()
+    );
+
+    if (reactionIndex === -1) {
+      message.reactions.push({ emoji, userId });
     }
 
     await message.save();
@@ -98,30 +92,24 @@ class MessageService {
       throw new Error('Message not found');
     }
 
-    const reaction = message.reactions.find(r => r.emoji === emoji);
-    if (reaction) {
-      reaction.users = reaction.users.filter(id => !id.equals(userId));
-      if (reaction.users.length === 0) {
-        message.reactions = message.reactions.filter(r => r.emoji !== emoji);
-      }
-    }
+    message.reactions = message.reactions.filter(
+      r => !(r.emoji === emoji && r.userId.toString() === userId.toString())
+    );
 
     await message.save();
     return message.populate('sender', 'username avatar');
   }
 
-  static async pinMessage(messageId, userId, isAdmin = false) {
+  static async pinMessage(messageId, userId) {
     const message = await Message.findById(messageId);
     if (!message) {
       throw new Error('Message not found');
     }
 
-    // Check if user is room moderator or admin
+    // Only room creator or message sender can pin
     const room = await Room.findById(message.room);
-    const isModerator = room.moderators.some(id => id.equals(userId));
-
-    if (!isAdmin && !isModerator) {
-      throw new Error('Only moderators can pin messages');
+    if (room.creator.toString() !== userId.toString() && message.sender.toString() !== userId.toString()) {
+      throw new Error('You do not have permission to pin this message');
     }
 
     message.isPinned = !message.isPinned;

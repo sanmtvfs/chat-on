@@ -1,34 +1,38 @@
 const User = require('../models/User');
-const FileService = require('./FileService');
+const fs = require('fs').promises;
+const path = require('path');
 
 class UserService {
   static async getUserProfile(userId) {
-    const user = await User.findById(userId)
-      .select('-password')
-      .populate('rooms', 'name ageGroup');
-
+    const user = await User.findById(userId).select('-password');
+    if (!user) {
+      throw new Error('User not found');
+    }
     return user;
   }
 
-  static async updateUserProfile(userId, updateData) {
-    const { username, bio, avatar } = updateData;
-
+  static async updateUserProfile(userId, { username, bio }) {
     const user = await User.findById(userId);
     if (!user) {
       throw new Error('User not found');
     }
 
+    // Check if new username is already taken
+    if (username && username !== user.username) {
+      const existing = await User.findOne({ username });
+      if (existing) {
+        throw new Error('Username already in use');
+      }
+    }
+
     if (username) user.username = username;
     if (bio) user.bio = bio;
-    if (avatar) user.avatar = avatar;
 
     await user.save();
-    return user;
+    return user.toObject({ getters: true });
   }
 
   static async uploadAvatar(userId, file) {
-    const fileInfo = await FileService.saveFile(file, null);
-
     const user = await User.findById(userId);
     if (!user) {
       throw new Error('User not found');
@@ -36,20 +40,32 @@ class UserService {
 
     // Delete old avatar if exists
     if (user.avatar) {
-      const filename = user.avatar.split('/').pop();
-      await FileService.deleteFile(filename);
+      try {
+        await fs.unlink(path.join('uploads', user.avatar));
+      } catch (err) {
+        console.error('Error deleting old avatar:', err);
+      }
     }
 
-    user.avatar = fileInfo.url;
+    user.avatar = file.filename;
     await user.save();
 
-    return user;
+    return user.toObject({ getters: true });
   }
 
   static async blockUser(userId, blockedUserId) {
+    if (userId.toString() === blockedUserId.toString()) {
+      throw new Error('Cannot block yourself');
+    }
+
     const user = await User.findById(userId);
     if (!user) {
       throw new Error('User not found');
+    }
+
+    const blockedUser = await User.findById(blockedUserId);
+    if (!blockedUser) {
+      throw new Error('Blocked user not found');
     }
 
     if (!user.blockedUsers.includes(blockedUserId)) {
@@ -57,7 +73,7 @@ class UserService {
       await user.save();
     }
 
-    return user;
+    return user.toObject({ getters: true });
   }
 
   static async unblockUser(userId, blockedUserId) {
@@ -66,14 +82,20 @@ class UserService {
       throw new Error('User not found');
     }
 
-    user.blockedUsers = user.blockedUsers.filter(id => !id.equals(blockedUserId));
+    user.blockedUsers = user.blockedUsers.filter(
+      id => id.toString() !== blockedUserId.toString()
+    );
     await user.save();
 
-    return user;
+    return user.toObject({ getters: true });
   }
 
   static async getBlockedUsers(userId) {
-    const user = await User.findById(userId).populate('blockedUsers', 'username avatar');
+    const user = await User.findById(userId).populate('blockedUsers', 'username email avatar');
+    if (!user) {
+      throw new Error('User not found');
+    }
+
     return user.blockedUsers;
   }
 }

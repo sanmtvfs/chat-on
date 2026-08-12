@@ -1,59 +1,42 @@
-const { verifyToken } = require('../config/jwt');
+const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
-const protect = async (req, res, next) => {
-  let token;
-
-  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-    token = req.headers.authorization.split(' ')[1];
-  }
-
-  if (!token) {
-    return res.status(401).json({ message: 'Not authorized to access this route' });
-  }
-
+const auth = async (req, res, next) => {
   try {
-    const decoded = verifyToken(token);
-    if (!decoded) {
-      return res.status(401).json({ message: 'Token is not valid' });
+    const token = req.headers.authorization?.split(' ')[1];
+
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        message: 'No token provided'
+      });
     }
 
-    req.user = await User.findById(decoded.userId);
-    if (!req.user) {
-      return res.status(404).json({ message: 'User not found' });
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
     }
 
-    // Check if user is banned
-    if (req.user.isBannedNow()) {
-      return res.status(403).json({ message: 'User is banned' });
+    if (user.isBanned) {
+      return res.status(403).json({
+        success: false,
+        message: 'User is banned'
+      });
     }
 
+    req.user = user;
     next();
   } catch (error) {
-    res.status(401).json({ message: 'Not authorized to access this route' });
+    res.status(401).json({
+      success: false,
+      message: 'Invalid token'
+    });
   }
 };
 
-const validateAge = (minAge, maxAge = null) => {
-  return (req, res, next) => {
-    if (!req.user) {
-      return res.status(401).json({ message: 'User not authenticated' });
-    }
-
-    if (req.user.age < minAge) {
-      return res.status(403).json({ 
-        message: `You must be at least ${minAge} years old to access this room` 
-      });
-    }
-
-    if (maxAge && req.user.age > maxAge) {
-      return res.status(403).json({ 
-        message: `You must be no older than ${maxAge} years old to access this room` 
-      });
-    }
-
-    next();
-  };
-};
-
-module.exports = { protect, validateAge };
+module.exports = auth;

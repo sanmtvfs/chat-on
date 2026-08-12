@@ -1,21 +1,47 @@
 const express = require('express');
 const router = express.Router();
-const MessageController = require('../controllers/MessageController');
-const auth = require('../middleware/auth');
-const { messageLimiter } = require('../middleware/rateLimiter');
-const { validateMessage } = require('../middleware/validation');
+const MessageService = require('../services/MessageService');
+const { authenticateToken } = require('../middleware/auth');
 
-// Protected routes
-router.post('/', auth, messageLimiter, validateMessage, MessageController.createMessage);
-router.get('/:roomId', auth, MessageController.getMessages);
-router.put('/:messageId', auth, validateMessage, MessageController.editMessage);
-router.delete('/:messageId', auth, MessageController.deleteMessage);
+// Get messages from room
+router.get('/:roomId', async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    const { limit = 50, skip = 0 } = req.query;
 
-// Reactions
-router.post('/:messageId/react', auth, MessageController.addReaction);
-router.delete('/:messageId/react', auth, MessageController.removeReaction);
+    const messages = await MessageService.getMessages(roomId, limit, skip);
+    res.status(200).json(messages);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
 
-// Pin message
-router.post('/:messageId/pin', auth, MessageController.pinMessage);
+// Edit message
+router.put('/:messageId', authenticateToken, async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const { content, roomId } = req.body;
+
+    if (!content || !roomId) {
+      return res.status(400).json({ message: 'Content and room ID required' });
+    }
+
+    const message = await MessageService.editMessage(messageId, content, req.userId);
+    res.status(200).json(message);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+// Delete message
+router.delete('/:messageId', authenticateToken, async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    await MessageService.deleteMessage(messageId, req.userId);
+    res.status(200).json({ message: 'Message deleted' });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
 
 module.exports = router;

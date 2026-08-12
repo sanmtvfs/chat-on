@@ -1,97 +1,109 @@
 const User = require('../models/User');
-const fs = require('fs').promises;
+const fs = require('fs');
 const path = require('path');
 
 class UserService {
   static async getUserProfile(userId) {
-    const user = await User.findById(userId).select('-password');
+    const user = await User.findById(userId)
+      .populate('rooms')
+      .select('-password');
+
     if (!user) {
       throw new Error('User not found');
     }
+
     return user;
   }
 
   static async updateUserProfile(userId, { username, bio }) {
     const user = await User.findById(userId);
+
     if (!user) {
       throw new Error('User not found');
     }
 
-    // Check if new username is already taken
-    if (username && username !== user.username) {
-      const existing = await User.findOne({ username });
-      if (existing) {
-        throw new Error('Username already in use');
+    if (username) {
+      // Check if username is already taken
+      const existingUser = await User.findOne({ username, _id: { $ne: userId } });
+      if (existingUser) {
+        throw new Error('Username already taken');
       }
+      user.username = username;
     }
 
-    if (username) user.username = username;
-    if (bio) user.bio = bio;
+    if (bio !== undefined) {
+      user.bio = bio;
+    }
 
+    user.updatedAt = new Date();
     await user.save();
-    return user.toObject({ getters: true });
+
+    return user.toJSON();
   }
 
   static async uploadAvatar(userId, file) {
     const user = await User.findById(userId);
+
     if (!user) {
       throw new Error('User not found');
     }
 
     // Delete old avatar if exists
     if (user.avatar) {
-      try {
-        await fs.unlink(path.join('uploads', user.avatar));
-      } catch (err) {
-        console.error('Error deleting old avatar:', err);
+      const oldPath = path.join(__dirname, '..', user.avatar);
+      if (fs.existsSync(oldPath)) {
+        fs.unlinkSync(oldPath);
       }
     }
 
-    user.avatar = file.filename;
+    user.avatar = `/uploads/${file.filename}`;
+    user.updatedAt = new Date();
     await user.save();
 
-    return user.toObject({ getters: true });
+    return user.toJSON();
   }
 
   static async blockUser(userId, blockedUserId) {
-    if (userId.toString() === blockedUserId.toString()) {
-      throw new Error('Cannot block yourself');
-    }
-
     const user = await User.findById(userId);
+
     if (!user) {
       throw new Error('User not found');
     }
 
     const blockedUser = await User.findById(blockedUserId);
+
     if (!blockedUser) {
-      throw new Error('Blocked user not found');
+      throw new Error('User to block not found');
     }
 
-    if (!user.blockedUsers.includes(blockedUserId)) {
-      user.blockedUsers.push(blockedUserId);
-      await user.save();
+    if (user.blockedUsers.includes(blockedUserId)) {
+      throw new Error('User already blocked');
     }
 
-    return user.toObject({ getters: true });
+    user.blockedUsers.push(blockedUserId);
+    user.updatedAt = new Date();
+    await user.save();
+
+    return user.toJSON();
   }
 
   static async unblockUser(userId, blockedUserId) {
     const user = await User.findById(userId);
+
     if (!user) {
       throw new Error('User not found');
     }
 
-    user.blockedUsers = user.blockedUsers.filter(
-      id => id.toString() !== blockedUserId.toString()
-    );
+    user.blockedUsers = user.blockedUsers.filter(id => id.toString() !== blockedUserId);
+    user.updatedAt = new Date();
     await user.save();
 
-    return user.toObject({ getters: true });
+    return user.toJSON();
   }
 
   static async getBlockedUsers(userId) {
-    const user = await User.findById(userId).populate('blockedUsers', 'username email avatar');
+    const user = await User.findById(userId).populate('blockedUsers', '-password');
+
     if (!user) {
       throw new Error('User not found');
     }

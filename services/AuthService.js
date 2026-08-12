@@ -1,35 +1,23 @@
-const User = require('../models/User');
-const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const nodemailer = require('nodemailer');
+const User = require('../models/User');
 
 class AuthService {
   static async register({ username, email, password, dateOfBirth }) {
     // Check if user already exists
-    const existingUser = await User.findOne({ $or: [{ email }, { username }] });
+    const existingUser = await User.findOne({
+      $or: [{ email }, { username }]
+    });
+
     if (existingUser) {
-      throw new Error('Email or username already in use');
+      throw new Error('User already exists');
     }
-
-    // Calculate age group
-    const age = this.calculateAge(dateOfBirth);
-    const ageGroup = this.getAgeGroup(age);
-
-    // Verify age is at least 13
-    if (age < 13) {
-      throw new Error('Users must be at least 13 years old');
-    }
-
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
 
     // Create new user
     const user = new User({
       username,
       email,
-      password: hashedPassword,
-      dateOfBirth,
-      ageGroup
+      password,
+      dateOfBirth
     });
 
     await user.save();
@@ -38,66 +26,62 @@ class AuthService {
     const tokens = this.generateTokens(user._id);
 
     return {
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        ageGroup: user.ageGroup
-      },
-      ...tokens
+      user: user.toJSON(),
+      tokens
     };
   }
 
   static async login(email, password) {
-    // Find user
+    // Find user by email
     const user = await User.findOne({ email });
+
     if (!user) {
-      throw new Error('Invalid credentials');
+      throw new Error('Invalid email or password');
     }
 
-    // Check password
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-    if (!isPasswordValid) {
-      throw new Error('Invalid credentials');
-    }
-
-    // Check if banned
+    // Check if user is banned
     if (user.isBanned) {
-      throw new Error('User account is banned');
+      if (user.bannedUntil && user.bannedUntil > new Date()) {
+        throw new Error(`User is banned until ${user.bannedUntil}`);
+      } else if (user.bannedUntil) {
+        // Ban expired, unban user
+        user.isBanned = false;
+        user.bannedUntil = null;
+        await user.save();
+      }
+    }
+
+    // Compare password
+    const isValid = await user.comparePassword(password);
+
+    if (!isValid) {
+      throw new Error('Invalid email or password');
     }
 
     // Generate tokens
     const tokens = this.generateTokens(user._id);
 
-    // Update last login
-    user.lastLogin = new Date();
-    await user.save();
-
     return {
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        ageGroup: user.ageGroup
-      },
-      ...tokens
+      user: user.toJSON(),
+      tokens
     };
   }
 
   static async refreshToken(userId) {
     const user = await User.findById(userId);
-    if (!user || user.isBanned) {
-      throw new Error('Invalid user');
+
+    if (!user) {
+      throw new Error('User not found');
     }
 
-    return this.generateTokens(user._id);
+    return this.generateTokens(userId);
   }
 
   static generateTokens(userId) {
     const accessToken = jwt.sign(
       { userId },
       process.env.JWT_SECRET,
-      { expiresIn: '24h' }
+      { expiresIn: '1h' }
     );
 
     const refreshToken = jwt.sign(
@@ -107,27 +91,6 @@ class AuthService {
     );
 
     return { accessToken, refreshToken };
-  }
-
-  static calculateAge(dateOfBirth) {
-    const today = new Date();
-    const birthDate = new Date(dateOfBirth);
-    let age = today.getFullYear() - birthDate.getFullYear();
-    const monthDiff = today.getMonth() - birthDate.getMonth();
-
-    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
-      age--;
-    }
-
-    return age;
-  }
-
-  static getAgeGroup(age) {
-    if (age < 18) return '13-17';
-    if (age < 26) return '18-25';
-    if (age < 36) return '26-35';
-    if (age < 51) return '36-50';
-    return '50+';
   }
 }
 

@@ -1,51 +1,41 @@
-const errorHandler = (err, req, res, next) => {
-  console.error('Error:', err);
+const errorHandler = (error, req, res, next) => {
+  console.error('Error:', error);
 
   // Validation errors
-  if (err.name === 'ValidationError') {
-    return res.status(400).json({
-      success: false,
-      message: 'Validation error',
-      errors: Object.values(err.errors).map(e => e.message)
-    });
-  }
-
-  // Duplicate key error
-  if (err.code === 11000) {
-    const field = Object.keys(err.keyPattern)[0];
-    return res.status(400).json({
-      success: false,
-      message: `${field} already exists`
-    });
-  }
-
-  // Cast error
-  if (err.name === 'CastError') {
-    return res.status(400).json({
-      success: false,
-      message: 'Invalid ID format'
-    });
+  if (error.message.includes('validation')) {
+    return res.status(400).json({ error: error.message });
   }
 
   // JWT errors
-  if (err.name === 'JsonWebTokenError') {
-    return res.status(401).json({
-      success: false,
-      message: 'Invalid token'
-    });
+  if (error.name === 'JsonWebTokenError') {
+    return res.status(401).json({ error: 'Invalid token' });
   }
 
-  if (err.name === 'TokenExpiredError') {
-    return res.status(401).json({
-      success: false,
-      message: 'Token expired'
-    });
+  if (error.name === 'TokenExpiredError') {
+    return res.status(401).json({ error: 'Token expired' });
+  }
+
+  // MongoDB errors
+  if (error.name === 'CastError') {
+    return res.status(400).json({ error: 'Invalid ID format' });
+  }
+
+  if (error.code === 11000) {
+    const field = Object.keys(error.keyPattern)[0];
+    return res.status(400).json({ error: `${field} already exists` });
+  }
+
+  // Multer errors
+  if (error.name === 'MulterError') {
+    if (error.code === 'FILE_TOO_LARGE') {
+      return res.status(400).json({ error: 'File too large' });
+    }
+    return res.status(400).json({ error: 'File upload error' });
   }
 
   // Default error
-  res.status(err.status || 500).json({
-    success: false,
-    message: err.message || 'Internal server error'
+  res.status(error.status || 500).json({
+    error: error.message || 'Internal server error'
   });
 };
 
